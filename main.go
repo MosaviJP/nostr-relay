@@ -16,12 +16,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MosaviJP/relayer/v2"
 	"github.com/fiatjaf/eventstore"
 	"github.com/fiatjaf/eventstore/mysql"
 	"github.com/fiatjaf/eventstore/opensearch"
 	"github.com/fiatjaf/eventstore/postgresql"
 	"github.com/fiatjaf/eventstore/sqlite3"
-	"github.com/fiatjaf/relayer/v2"
 	"github.com/jmoiron/sqlx"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/nbd-wtf/go-nostr"
@@ -153,8 +153,8 @@ var relayLimitationDocument = &nip11.RelayLimitationDocument{
 	MaxFilters:       30,    //
 	MaxLimit:         500,   //
 	MaxSubidLength:   100,   //
-	MaxEventTags:     100,   //
-	MaxContentLength: 16384, //
+	MaxEventTags:     200,   //
+	MaxContentLength: 163840, //
 	MinPowDifficulty: 30,
 	AuthRequired:     false,
 	PaymentRequired:  false,
@@ -312,7 +312,7 @@ func main() {
 	var databaseURL string
 
 	flag.StringVar(&addr, "addr", "0.0.0.0:7447", "listen address")
-	flag.StringVar(&r.driverName, "driver", "sqlite3", "driver name (sqlite3/postgresql/mysql/opensearch)")
+	flag.StringVar(&r.driverName, "driver", "postgresql", "driver name (sqlite3/postgresql/mysql/opensearch)")
 	flag.StringVar(&databaseURL, "database", envDef("DATABASE_URL", "nostr-relay.sqlite"), "connection string")
 	flag.StringVar(&r.serviceURL, "service-url", envDef("SERVICE_URL", ""), "service URL")
 	flag.BoolVar(&ver, "version", false, "show version")
