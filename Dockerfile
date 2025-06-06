@@ -11,8 +11,11 @@ RUN mkdir /data
 ENV GOCACHE=/root/.cache/go-build
 RUN --mount=type=cache,target="/root/.cache/go-build" CGO_ENABLED=1 go install -buildvcs=false -trimpath -ldflags '-w -s -extldflags "-static"'
 RUN [ -e /usr/bin/upx ] && upx /go/bin/nostr-relay || echo
-FROM scratch
+FROM alpine:3.21
+RUN apk add --no-cache jq
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 COPY --from=build-dev /data /data
 COPY --link --from=build-dev /go/bin/nostr-relay /go/bin/nostr-relay
 COPY --from=build-dev /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-CMD ["/go/bin/nostr-relay"]
+ENTRYPOINT ["/entrypoint.sh"]
