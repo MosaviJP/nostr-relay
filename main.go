@@ -358,6 +358,18 @@ func main() {
 			QueryTagsLimit:   relayLimitationDocument.MaxEventTags,
 			KeepRecentEvents: true,
 		}
+		if roDatabaseURL != "" {
+			r.postgresReaderStorage = &postgresql.PostgresBackend{
+				DatabaseURL:      roDatabaseURL,
+				QueryLimit:       relayLimitationDocument.MaxLimit,
+				QueryTagsLimit:   relayLimitationDocument.MaxEventTags,
+				KeepRecentEvents: true,
+			}
+			// 只读库初始化：不执行DDL，只赋默认limit
+			if err := r.postgresReaderStorage.InitReadOnly(); err != nil {
+				log.Fatalf("failed to init read-only Postgres DB: %v", err)
+			}
+		}
 	case "mysql":
 		r.mysqlStorage = &mysql.MySQLBackend{
 			DatabaseURL:    databaseURL,
