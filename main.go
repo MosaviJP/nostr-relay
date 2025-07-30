@@ -16,12 +16,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MosaviJP/eventstore"
+	"github.com/MosaviJP/eventstore/mysql"
+	"github.com/MosaviJP/eventstore/opensearch"
+	"github.com/MosaviJP/eventstore/postgresql"
+	"github.com/MosaviJP/eventstore/sqlite3"
 	"github.com/MosaviJP/relayer/v2"
-	"github.com/fiatjaf/eventstore"
-	"github.com/fiatjaf/eventstore/mysql"
-	"github.com/fiatjaf/eventstore/opensearch"
-	"github.com/fiatjaf/eventstore/postgresql"
-	"github.com/fiatjaf/eventstore/sqlite3"
 	"github.com/jmoiron/sqlx"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/nbd-wtf/go-nostr"
@@ -52,12 +52,32 @@ type Relay struct {
 	postgresStorage   *postgresql.PostgresBackend
 	mysqlStorage      *mysql.MySQLBackend
 	opensearchStorage *opensearch.OpensearchStorage
+	postgresReaderStorage *postgresql.PostgresBackend
 
 	serviceURL           string
 	mu                   sync.Mutex
 	allowlist            []string
 	blocklist            []string
 	disappearingStore    relayer.DisappearingMessageStore
+}
+// ReaderStorage 返回只读库（如有），否则返回 nil
+func (r *Relay) ReaderStorage(ctx context.Context) eventstore.Store {
+	switch r.driverName {
+	case "postgresql":
+		if r.postgresReaderStorage != nil {
+			return r.postgresReaderStorage
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+// ReaderDB returns the read-only DB if available, otherwise fallback to main DB
+func (r *Relay) ReaderDB() *sqlx.DB {
+	if r.driverName == "postgresql" && r.postgresReaderStorage != nil && r.postgresReaderStorage.DB != nil {
+		return r.postgresReaderStorage.DB
+	}
+	return r.DB()
 }
 
 func (r *Relay) Name() string {
@@ -152,7 +172,7 @@ var relayLimitationDocument = &nip11.RelayLimitationDocument{
 	MaxMessageLength: 524288,
 	MaxSubscriptions: 20,    //
 	MaxFilters:       30,    //
-	MaxLimit:         500,   //
+	MaxLimit:         10000,   //
 	MaxSubidLength:   100,   //
 	MaxEventTags:     100000,   //
 	MaxContentLength: 163840, //
@@ -316,10 +336,12 @@ func main() {
 	var ver bool
 	var addr string
 	var databaseURL string
+	var roDatabaseURL string
 
 	flag.StringVar(&addr, "addr", "0.0.0.0:7447", "listen address")
 	flag.StringVar(&r.driverName, "driver", "postgresql", "driver name (sqlite3/postgresql/mysql/opensearch)")
 	flag.StringVar(&databaseURL, "database", envDef("DATABASE_URL", "nostr-relay.sqlite"), "connection string")
+	flag.StringVar(&roDatabaseURL, "ro-database", envDef("RO_DATABASE_URL", ""), "read-only database connection string")
 	flag.StringVar(&r.serviceURL, "service-url", envDef("SERVICE_URL", ""), "service URL")
 	flag.BoolVar(&ver, "version", false, "show version")
 	flag.Parse()
@@ -418,7 +440,16 @@ func main() {
 	}
 
 	sub, _ := fs.Sub(assets, "static")
-	server.Router().HandleFunc("/query", server.HandleHttpReq)
+	server.Router().HandleFunc("/query", func(w http.ResponseWriter, req *http.Request) {
+		ctx := req.Context()
+		store := r.Storage(ctx)
+		if reader, ok := interface{}(r).(interface{ ReaderStorage(context.Context) eventstore.Store }); ok {
+			if rs := reader.ReaderStorage(ctx); rs != nil {
+				store = rs
+			}
+		}
+		server.HandleHttpReq(w, req, store)
+	})
 	server.Router().HandleFunc("/info", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Add("content-type", "application/json")
 		info := Info{

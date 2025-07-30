@@ -7,7 +7,7 @@ require (
 	github.com/MosaviJP/relayer/v2 v2.2.5-0.20250730064801-749bef2b42a4
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/kelseyhightower/envconfig v1.4.0
-	github.com/nbd-wtf/go-nostr v0.51.7
+	github.com/nbd-wtf/go-nostr v0.51.8
 )
 
 require (
@@ -47,12 +47,13 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.59.0 // indirect
-	golang.org/x/arch v0.15.0 // indirect
+	golang.org/x/arch v0.16.0 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
 	golang.org/x/net v0.38.0 // indirect
-	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 )
 
-//replace github.com/fiatjaf/relayer/v2 => ../../go/src/github.com/fiatjaf/relayer@master
-//replace github.com/fiatjaf/eventstore => ../../go/src/github.com/fiatjaf/eventstore
+// replace github.com/fiatjaf/relayer/v2 => ../relayer@master
+
+// replace github.com/fiatjaf/eventstore => ../eventstore
