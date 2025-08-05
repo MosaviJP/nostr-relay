@@ -7,7 +7,7 @@ if [ -n "$DATABASE_URL" ]; then
 else
     POSTGRES_PW=$(echo "$POSTGRES_PASSWORD" | jq -r .password)
     export DATABASE_URL="postgres://mosavi_admin:${POSTGRES_PW}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}?sslmode=require&timezone=Asia/Tokyo&search_path=relay"
-    export RO_DATABASE_URL="postgres://mosavi_admin:${POSTGRES_PW}@${POSTGRES_HOST}:${POSTGRES_PORT}/${RO_POSTGRES_DB}?sslmode=require&timezone=Asia/Tokyo&search_path=relay"
+    export RO_DATABASE_URL="postgres://mosavi_admin:${POSTGRES_PW}@${RO_POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}?sslmode=require&timezone=Asia/Tokyo&search_path=relay"
 fi
 
 exec /go/bin/nostr-relay
