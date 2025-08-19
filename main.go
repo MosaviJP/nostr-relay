@@ -27,6 +27,8 @@ import (
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip11"
 	"github.com/nbd-wtf/go-nostr/nip70"
+
+	_ "net/http/pprof" // 只有环境变量 ENABLE_PPROF=yes 时才启动 pprof 路由
 )
 
 const name = "nostr-relay"
@@ -320,6 +322,9 @@ func init() {
 	})))
 }
 
+// skipEventFunc 检查事件是否已过期（基于expiration标签）
+// 注意：现在已经在数据库查询层面过滤了过期事件，所以这个函数暂时不使用
+// 保留此函数以备将来可能的用途或作为备用方案
 func skipEventFunc(ev *nostr.Event) bool {
 	now := nostr.Now()
 	for _, ex := range ev.Tags.GetAll([]string{"expiration"}) {
@@ -360,7 +365,7 @@ func main() {
 		log.Fatalf("failed to parse port number: %v", err)
 	}
 
-	if envDef("ENABLE_PPOROF", "no") == "yes" {
+	if envDef("ENABLE_PPROF", "no") == "yes" {
 		go func() {
 			log.Println(http.ListenAndServe("0.0.0.0:6060", nil))
 		}()
@@ -412,7 +417,8 @@ func main() {
 	server, err := relayer.NewServer(
 		&r,
 		relayer.WithPerConnectionLimiter(5.0, 1),
-		relayer.WithSkipEventFunc(skipEventFunc),
+		// 注释掉skipEventFunc，因为现在在数据库查询层面已经过滤了过期事件
+		// relayer.WithSkipEventFunc(skipEventFunc),
 	)
 	if err != nil {
 		log.Fatalf("failed to create server: %v", err)
