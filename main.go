@@ -54,6 +54,11 @@ var (
 	assets embed.FS
 )
 
+// GroupManagementConfig holds the configuration for group management
+type GroupManagementConfig struct {
+	BotPrivateKey string
+}
+
 type Relay struct {
 	driverName        string
 	sqlite3Storage    *sqlite3.SQLite3Backend
@@ -87,6 +92,9 @@ type Relay struct {
     redisDialTimeout time.Duration
     redisRWTimeout   time.Duration
     redisOpTimeout   time.Duration
+	
+	// Group bot configuration
+	botPrivateKey        string
 }
 // ReaderStorage 返回只读库（如有），否则返回 nil
 func (r *Relay) ReaderStorage(ctx context.Context) eventstore.Store {
@@ -583,6 +591,11 @@ func skipEventFunc(ev *nostr.Event) bool {
 	return false
 }
 
+// GetGroupManagementConfig returns the group management configuration
+func (r *Relay) GetGroupManagementConfig() string {
+	return r.botPrivateKey
+}
+
 func main() {
 	var r Relay
 	var ver bool
@@ -591,10 +604,11 @@ func main() {
 	var roDatabaseURL string
 
 	flag.StringVar(&addr, "addr", "0.0.0.0:7447", "listen address")
-	flag.StringVar(&r.driverName, "driver", "postgresql", "driver name (sqlite3/postgresql/mysql/opensearch)")
+	flag.StringVar(&r.driverName, "driver", envDef("DRIVER", "postgresql"), "driver name (sqlite3/postgresql/mysql/opensearch)")
 	flag.StringVar(&databaseURL, "database", envDef("DATABASE_URL", "nostr-relay.sqlite"), "connection string")
 	flag.StringVar(&roDatabaseURL, "ro-database", envDef("RO_DATABASE_URL", ""), "read-only database connection string")
 	flag.StringVar(&r.serviceURL, "service-url", envDef("SERVICE_URL", ""), "service URL")
+	flag.StringVar(&r.botPrivateKey, "bot-private-key", envDef("BOT_PRIVATE_KEY", ""), "bot private key for group management")
 	flag.BoolVar(&ver, "version", false, "show version")
 	flag.Parse()
 
@@ -697,10 +711,8 @@ func main() {
 	server.Router().HandleFunc("/query", func(w http.ResponseWriter, req *http.Request) {
 		ctx := req.Context()
 		store := r.Storage(ctx)
-		if reader, ok := interface{}(r).(interface{ ReaderStorage(context.Context) eventstore.Store }); ok {
-			if rs := reader.ReaderStorage(ctx); rs != nil {
-				store = rs
-			}
+		if rs := r.ReaderStorage(ctx); rs != nil {
+			store = rs
 		}
 		server.HandleHttpReq(w, req, store)
 	})
