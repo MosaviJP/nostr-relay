@@ -3,7 +3,7 @@ module github.com/mattn/nostr-relay
 go 1.24.1
 
 require (
-	github.com/MosaviJP/eventstore v0.0.0-20250819060152-fb4bb2afbcd4
+	github.com/MosaviJP/eventstore v0.0.0-20250826153144-ebd677542a8a
 	github.com/MosaviJP/relayer/v2 v2.2.5-0.20250826100847-516587942014
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/kelseyhightower/envconfig v1.4.0
