@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"embed"
 	"encoding/json"
 	"flag"
@@ -77,6 +79,11 @@ type Relay struct {
     injectTTL      time.Duration
     injectQueueCap int
     injectChCap    int
+
+    // redis timeouts
+    redisDialTimeout time.Duration
+    redisRWTimeout   time.Duration
+    redisOpTimeout   time.Duration
 }
 // ReaderStorage 返回只读库（如有），否则返回 nil
 func (r *Relay) ReaderStorage(ctx context.Context) eventstore.Store {
@@ -177,7 +184,62 @@ func (r *Relay) initRedisPubSubFromEnv() {
 		inst = randomHex(16)
 	}
 
-	r.redisClient = redis.NewClient(&redis.Options{Addr: addr, Password: password, DB: db})
+	// TLS + auth options for ElastiCache (in-transit encryption)
+	var tlsConf *tls.Config
+	if v := os.Getenv("NOSTR_RELAY_REDIS_TLS"); v == "1" || v == "true" || v == "yes" {
+		serverName, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			serverName = addr
+		}
+		tlsConf = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: serverName}
+		if sv := os.Getenv("NOSTR_RELAY_REDIS_TLS_SKIP_VERIFY"); sv == "1" || sv == "true" || sv == "yes" {
+			tlsConf.InsecureSkipVerify = true
+		}
+		if ca := os.Getenv("NOSTR_RELAY_REDIS_CA"); ca != "" {
+			if pem, err := os.ReadFile(ca); err == nil {
+				pool := x509.NewCertPool()
+				if pool.AppendCertsFromPEM(pem) {
+					tlsConf.RootCAs = pool
+				}
+			}
+		}
+	}
+	username := os.Getenv("NOSTR_RELAY_REDIS_USERNAME")
+
+    // Timeouts (configurable)
+    dialTOms := 5000
+    if s := os.Getenv("NOSTR_RELAY_REDIS_DIAL_TIMEOUT_MS"); s != "" {
+        if n, err := strconv.Atoi(s); err == nil && n > 0 {
+            dialTOms = n
+        }
+    }
+    rwTOms := 5000
+    if s := os.Getenv("NOSTR_RELAY_REDIS_RW_TIMEOUT_MS"); s != "" {
+        if n, err := strconv.Atoi(s); err == nil && n > 0 {
+            rwTOms = n
+        }
+    }
+    opTOms := 5000
+    if s := os.Getenv("NOSTR_RELAY_REDIS_OP_TIMEOUT_MS"); s != "" {
+        if n, err := strconv.Atoi(s); err == nil && n > 0 {
+            opTOms = n
+        }
+    }
+
+    r.redisDialTimeout = time.Duration(dialTOms) * time.Millisecond
+    r.redisRWTimeout = time.Duration(rwTOms) * time.Millisecond
+    r.redisOpTimeout = time.Duration(opTOms) * time.Millisecond
+
+    r.redisClient = redis.NewClient(&redis.Options{
+        Addr:         addr,
+        Username:     username,
+        Password:     password,
+        DB:           db,
+        TLSConfig:    tlsConf,
+        DialTimeout:  r.redisDialTimeout,
+        ReadTimeout:  r.redisRWTimeout,
+        WriteTimeout: r.redisRWTimeout,
+    })
 	r.redisChannel = channel
 	r.instanceID = inst
 	// TTL and buffer sizes (configurable)
@@ -203,8 +265,8 @@ func (r *Relay) initRedisPubSubFromEnv() {
 	r.injectCh = make(chan nostr.Event, r.injectChCap)
 	r.injectQueue = make(chan injectedEvent, r.injectQueueCap)
 
-	// verify connectivity (non-fatal on failure)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+    // verify connectivity (non-fatal on failure)
+    ctx, cancel := context.WithTimeout(context.Background(), r.redisOpTimeout)
 	defer cancel()
 		if err := r.redisClient.Ping(ctx).Err(); err != nil {
 			slog.Warn("redis disabled: ping failed", "error", err)
@@ -270,11 +332,15 @@ func (r *Relay) BroadcastEvent(evt *nostr.Event) {
 		slog.Warn("failed to marshal event for redis", "error", err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := r.redisClient.Publish(ctx, r.redisChannel, payload).Err(); err != nil {
-		slog.Warn("redis publish failed", "error", err)
-	}
+    to := r.redisOpTimeout
+    if to <= 0 {
+        to = 5 * time.Second
+    }
+    ctx, cancel := context.WithTimeout(context.Background(), to)
+    defer cancel()
+    if err := r.redisClient.Publish(ctx, r.redisChannel, payload).Err(); err != nil {
+        slog.Warn("redis publish failed", "error", err)
+    }
 }
 
 // InjectEvents implements relayer.Injector to feed remote events to relayer
