@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
 	"encoding/json"
 	"flag"
@@ -27,6 +28,7 @@ import (
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip11"
 	"github.com/nbd-wtf/go-nostr/nip70"
+	redis "github.com/redis/go-redis/v9"
 
 	_ "net/http/pprof" // 只有环境变量 ENABLE_PPROF=yes 时才启动 pprof 路由
 )
@@ -43,6 +45,8 @@ var (
 	_ relayer.Informationer = (*Relay)(nil)
 	_ relayer.Logger        = (*Relay)(nil)
 	_ relayer.Auther        = (*Relay)(nil)
+	_ relayer.EventBroadcaster = (*Relay)(nil)
+	_ relayer.Injector          = (*Relay)(nil)
 
 	//go:embed static
 	assets embed.FS
@@ -60,6 +64,19 @@ type Relay struct {
 	mu                   sync.Mutex
 	allowlist            []string
 	blocklist            []string
+
+    // Redis Pub/Sub (optional) for cross-instance event fanout
+    redisClient    *redis.Client
+    redisSub       *redis.PubSub
+    redisChannel   string
+    instanceID     string
+    // sink channel exposed to relayer.Injector
+    injectCh       chan nostr.Event
+    // internal queue with enqueue time for TTL-based dropping
+    injectQueue    chan injectedEvent
+    injectTTL      time.Duration
+    injectQueueCap int
+    injectChCap    int
 }
 // ReaderStorage 返回只读库（如有），否则返回 nil
 func (r *Relay) ReaderStorage(ctx context.Context) eventstore.Store {
@@ -120,7 +137,169 @@ func (r *Relay) Storage(ctx context.Context) eventstore.Store {
 }
 
 func (r *Relay) Init() error {
+	r.initRedisPubSubFromEnv()
 	return nil
+}
+
+// ---- Cross-instance fanout via Redis Pub/Sub (optional) ----
+
+// redisEventEnvelope is the message sent over Redis
+type redisEventEnvelope struct {
+	Instance string	  `json:"instance"`
+	Event	nostr.Event `json:"event"`
+}
+
+// injectedEvent tracks when the message entered local queue to enforce TTL
+type injectedEvent struct {
+	evt        nostr.Event
+	enqueuedAt time.Time
+}
+
+// initRedisPubSubFromEnv initializes Redis Pub/Sub if env vars are set.
+func (r *Relay) initRedisPubSubFromEnv() {
+	addr := os.Getenv("NOSTR_RELAY_REDIS_ADDR")
+	if addr == "" {
+		return // disabled
+	}
+	channel := os.Getenv("NOSTR_RELAY_REDIS_CHANNEL")
+	if channel == "" {
+		channel = "nostr-relay:events"
+	}
+	password := os.Getenv("NOSTR_RELAY_REDIS_PASSWORD")
+	db := 0
+	if s := os.Getenv("NOSTR_RELAY_REDIS_DB"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
+			db = n
+		}
+	}
+	inst := os.Getenv("NOSTR_RELAY_INSTANCE_ID")
+	if inst == "" {
+		inst = randomHex(16)
+	}
+
+	r.redisClient = redis.NewClient(&redis.Options{Addr: addr, Password: password, DB: db})
+	r.redisChannel = channel
+	r.instanceID = inst
+	// TTL and buffer sizes (configurable)
+	ttlSecs := 10
+	if s := os.Getenv("NOSTR_RELAY_INJECT_TTL_SECS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			ttlSecs = n
+		}
+	}
+	r.injectTTL = time.Duration(ttlSecs) * time.Second
+	r.injectQueueCap = 4096
+	if s := os.Getenv("NOSTR_RELAY_INJECT_QUEUE_CAP"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			r.injectQueueCap = n
+		}
+	}
+	r.injectChCap = 1024
+	if s := os.Getenv("NOSTR_RELAY_INJECT_CH_CAP"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			r.injectChCap = n
+		}
+	}
+	r.injectCh = make(chan nostr.Event, r.injectChCap)
+	r.injectQueue = make(chan injectedEvent, r.injectQueueCap)
+
+	// verify connectivity (non-fatal on failure)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+		if err := r.redisClient.Ping(ctx).Err(); err != nil {
+			slog.Warn("redis disabled: ping failed", "error", err)
+			r.redisClient = nil
+			close(r.injectCh)
+			r.injectCh = nil
+			r.injectQueue = nil
+			return
+		}
+
+	r.redisSub = r.redisClient.Subscribe(context.Background(), r.redisChannel)
+	ch := r.redisSub.Channel()
+	go func() {
+		for msg := range ch {
+			var env redisEventEnvelope
+			if err := json.Unmarshal([]byte(msg.Payload), &env); err != nil {
+				slog.Warn("redis message unmarshal failed", "error", err)
+				continue
+			}
+			if env.Instance == r.instanceID {
+				continue // ignore our own publishes
+			}
+				if r.injectQueue != nil {
+					ie := injectedEvent{evt: env.Event, enqueuedAt: time.Now()}
+					select {
+					case r.injectQueue <- ie:
+						// enqueued
+					default:
+						// queue full: drop newest to avoid backpressure to redis
+						slog.Warn("inject queue full; dropping event")
+					}
+				}
+		}
+		}()
+		// Dispatcher: attempt to deliver before TTL; drop if waiting exceeds TTL
+		go func() {
+			for ie := range r.injectQueue {
+				age := time.Since(ie.enqueuedAt)
+				if age >= r.injectTTL {
+					// expired in queue
+					continue
+				}
+				remaining := r.injectTTL - age
+				select {
+				case r.injectCh <- ie.evt:
+					// delivered
+				case <-time.After(remaining):
+					// timed out waiting downstream
+				}
+			}
+		}()
+		slog.Info("redis pubsub enabled", "addr", addr, "channel", channel, "instance", inst, "inject_ttl", r.injectTTL, "inject_queue_cap", r.injectQueueCap, "inject_ch_cap", r.injectChCap)
+}
+
+// BroadcastEvent implements relayer.EventBroadcaster
+func (r *Relay) BroadcastEvent(evt *nostr.Event) {
+	if r == nil || r.redisClient == nil || evt == nil {
+		return
+	}
+	env := redisEventEnvelope{Instance: r.instanceID, Event: *evt}
+	payload, err := json.Marshal(env)
+	if err != nil {
+		slog.Warn("failed to marshal event for redis", "error", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := r.redisClient.Publish(ctx, r.redisChannel, payload).Err(); err != nil {
+		slog.Warn("redis publish failed", "error", err)
+	}
+}
+
+// InjectEvents implements relayer.Injector to feed remote events to relayer
+func (r *Relay) InjectEvents() chan nostr.Event {
+	if r.injectCh != nil {
+		return r.injectCh
+	}
+	ch := make(chan nostr.Event)
+	close(ch)
+	return ch
+}
+
+// randomHex returns a hex string of n random bytes.
+func randomHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	const hexdigits = "0123456789abcdef"
+	out := make([]byte, n*2)
+	for i := 0; i < n; i++ {
+		out[i*2] = hexdigits[b[i]>>4]
+		out[i*2+1] = hexdigits[b[i]&0x0f]
+	}
+	return string(out)
 }
 
 func (r *Relay) AcceptEvent(ctx context.Context, evt *nostr.Event) (bool, string) {
@@ -365,6 +544,7 @@ func main() {
 		}()
 	}
 
+	fmt.Printf("DB url: %s\n", databaseURL)
 	switch r.driverName {
 	case "sqlite3", "":
 		r.sqlite3Storage = &sqlite3.SQLite3Backend{
