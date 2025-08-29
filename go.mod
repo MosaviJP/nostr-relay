@@ -4,10 +4,11 @@ go 1.24.1
 
 require (
 	github.com/MosaviJP/eventstore v0.0.0-20250826153144-ebd677542a8a
-	github.com/MosaviJP/relayer/v2 v2.2.5-0.20250828084925-40d4edd40637
+	github.com/MosaviJP/relayer/v2 v2.2.5-0.20250829030056-265d15003b74
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/nbd-wtf/go-nostr v0.51.8
+	github.com/redis/go-redis/v9 v9.6.1
 )
 
 require (
@@ -20,10 +21,12 @@ require (
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/bytedance/sonic v1.13.2 // indirect
 	github.com/bytedance/sonic/loader v0.2.4 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.5 // indirect
 	github.com/coder/websocket v1.8.13 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/elastic/go-elasticsearch/v7 v7.17.10 // indirect
 	github.com/fasthttp/websocket v1.5.12 // indirect
 	github.com/fatih/structs v1.1.0 // indirect
