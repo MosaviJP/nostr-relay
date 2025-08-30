@@ -67,6 +67,9 @@ type Relay struct {
 	allowlist            []string
 	blocklist            []string
 
+	// disappearing messages backing store (if enabled)
+	disappearingStore    relayer.DisappearingMessageStore
+
     // Redis Pub/Sub (optional) for cross-instance event fanout
     redisClient    *redis.Client
     redisSub       *redis.PubSub
@@ -468,6 +471,11 @@ func (r *Relay) Errorf(format string, v ...any) {
 	slog.Error(fmt.Sprintf(format, v...))
 }
 
+// GetDisappearingStore implements relayer.DisappearingMessageSupport
+func (r *Relay) GetDisappearingStore() relayer.DisappearingMessageStore {
+    return r.disappearingStore
+}
+
 type Info struct {
 	Version     string `json:"version"`
 	NumEvents   int64  `json:"num_events"`
@@ -665,6 +673,18 @@ func main() {
 	}
 	r.ready()
 
+	// Initialize disappearing message store after database is ready
+	if db := r.DB(); db != nil && r.driverName == "postgresql" {
+		r.disappearingStore = relayer.NewPostgresDisappearingStore(db.DB)
+		ctx := context.Background()
+		if err := r.disappearingStore.CreateSchema(ctx); err != nil {
+			log.Printf("Warning: failed to create disappearing message schema: %v", err)
+		}
+		// Start cleanup routine for expired messages (runs every hour)
+		go relayer.StartDisappearingMessageCleanup(ctx, r.disappearingStore, time.Hour)
+	} else {
+		log.Printf("Info: disappearing message store not available for backend: %s", r.driverName)
+	}
 
 	if db := r.DB(); db != nil {
 		r.DB().SetConnMaxLifetime(1 * time.Minute)
