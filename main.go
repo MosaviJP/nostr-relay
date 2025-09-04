@@ -72,9 +72,6 @@ type Relay struct {
 	allowlist            []string
 	blocklist            []string
 
-	// disappearing messages backing store (if enabled)
-	disappearingStore    relayer.DisappearingMessageStore
-
     // Redis Pub/Sub (optional) for cross-instance event fanout
     redisClient    *redis.Client
     redisSub       *redis.PubSub
@@ -95,6 +92,9 @@ type Relay struct {
 	
 	// Group bot configuration
 	botPrivateKey        string
+
+	// Group management schema (e.g., moss_api, api)
+	groupSchema          string
 }
 // ReaderStorage 返回只读库（如有），否则返回 nil
 func (r *Relay) ReaderStorage(ctx context.Context) eventstore.Store {
@@ -421,7 +421,16 @@ func (r *Relay) AcceptReq(ctx context.Context, id string, filters nostr.Filters,
 		slog.Debug("AcceptReq", "limit", fmt.Sprintf("filters is limited as %d (but %d)", relayLimitationDocument.MaxFilters, len(filters)))
 		return false
 	}
-	slog.Debug("AcceptReq", "req", []any{"REQ", id, filters})
+	pubkey := auto
+	if pubkey == "" {
+		if v := ctx.Value("userPubkey"); v != nil {
+			if s, ok := v.(string); ok {
+				pubkey = s
+			}
+		}
+	}
+	// Single debug line with origin pubkey in message
+	slog.Debug("AcceptReq from ["+pubkey+"]", "req", []any{"REQ", id, filters})
 	return true
 }
 
@@ -477,11 +486,6 @@ func (r *Relay) Warningf(format string, v ...any) {
 
 func (r *Relay) Errorf(format string, v ...any) {
 	slog.Error(fmt.Sprintf(format, v...))
-}
-
-// GetDisappearingStore implements relayer.DisappearingMessageSupport
-func (r *Relay) GetDisappearingStore() relayer.DisappearingMessageStore {
-    return r.disappearingStore
 }
 
 type Info struct {
@@ -593,7 +597,15 @@ func skipEventFunc(ev *nostr.Event) bool {
 
 // GetGroupManagementConfig returns the group management configuration
 func (r *Relay) GetGroupManagementConfig() string {
-	return r.botPrivateKey
+    return r.botPrivateKey
+}
+
+// GetGroupManagementSchema returns the configured schema for group management tables
+func (r *Relay) GetGroupManagementSchema() string {
+    if r.groupSchema == "" {
+        return "moss_api"
+    }
+    return r.groupSchema
 }
 
 func main() {
@@ -608,7 +620,14 @@ func main() {
 	flag.StringVar(&databaseURL, "database", envDef("DATABASE_URL", "nostr-relay.sqlite"), "connection string")
 	flag.StringVar(&roDatabaseURL, "ro-database", envDef("RO_DATABASE_URL", ""), "read-only database connection string")
 	flag.StringVar(&r.serviceURL, "service-url", envDef("SERVICE_URL", ""), "service URL")
-	flag.StringVar(&r.botPrivateKey, "bot-private-key", envDef("BOT_PRIVATE_KEY", ""), "bot private key for group management")
+    flag.StringVar(&r.botPrivateKey, "bot-private-key", envDef("BOT_PRIVATE_KEY", ""), "bot private key for group management")
+    // group management schema flag (defaults: GROUP_MGMT_SCHEMA or RELAY_GROUP_SCHEMA or moss_api)
+    defaultSchema := func() string {
+        if v := os.Getenv("GROUP_MGMT_SCHEMA"); v != "" { return v }
+        if v := os.Getenv("RELAY_GROUP_SCHEMA"); v != "" { return v }
+        return "moss_api"
+    }()
+    flag.StringVar(&r.groupSchema, "group-mgmt-schema", defaultSchema, "schema name for group management tables (e.g., moss_api, api)")
 	flag.BoolVar(&ver, "version", false, "show version")
 	flag.Parse()
 
@@ -686,19 +705,6 @@ func main() {
 		log.Fatalf("failed to create server: %v", err)
 	}
 	r.ready()
-
-	// Initialize disappearing message store after database is ready
-	if db := r.DB(); db != nil && r.driverName == "postgresql" {
-		r.disappearingStore = relayer.NewPostgresDisappearingStore(db.DB)
-		ctx := context.Background()
-		if err := r.disappearingStore.CreateSchema(ctx); err != nil {
-			log.Printf("Warning: failed to create disappearing message schema: %v", err)
-		}
-		// Start cleanup routine for expired messages (runs every hour)
-		go relayer.StartDisappearingMessageCleanup(ctx, r.disappearingStore, time.Hour)
-	} else {
-		log.Printf("Info: disappearing message store not available for backend: %s", r.driverName)
-	}
 
 	if db := r.DB(); db != nil {
 		r.DB().SetConnMaxLifetime(1 * time.Minute)
