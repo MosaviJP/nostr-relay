@@ -4,7 +4,7 @@ go 1.24.1
 
 require (
 	github.com/MosaviJP/eventstore v0.0.0-20250909061408-397e335c70a0
-	github.com/MosaviJP/relayer/v2 v2.2.5-0.20250919074036-39f201ac10bd
+	github.com/MosaviJP/relayer/v2 v2.2.5-0.20250919075258-4f65210cff2b
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/nbd-wtf/go-nostr v0.51.8
@@ -58,6 +58,6 @@ require (
 	golang.org/x/time v0.11.0 // indirect
 )
 
-// replace github.com/MosaviJP/relayer/v2 => ../relayer
+// replace github.com/MosaviJP/relayer/v2 => ./relayer
 
-// replace github.com/MosaviJP/eventstore => ../eventstore
+// replace github.com/MosaviJP/eventstore => ./eventstore
