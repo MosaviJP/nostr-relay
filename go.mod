@@ -58,6 +58,6 @@ require (
 	golang.org/x/time v0.11.0 // indirect
 )
 
-replace github.com/MosaviJP/relayer/v2 => ./relayer
+// replace github.com/MosaviJP/relayer/v2 => ./relayer
 
-replace github.com/MosaviJP/eventstore => ./eventstore
+// replace github.com/MosaviJP/eventstore => ./eventstore
