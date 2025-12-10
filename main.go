@@ -441,7 +441,7 @@ var relayLimitationDocument = &nip11.RelayLimitationDocument{
 	MaxLimit:         10000,   //
 	MaxSubidLength:   100,   //
 	MaxEventTags:     100000,   //
-	MaxContentLength: 163840, //
+	MaxContentLength: 4000000, //
 	MinPowDifficulty: 30,
 	AuthRequired:     false,
 	PaymentRequired:  false,
