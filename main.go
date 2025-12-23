@@ -722,6 +722,7 @@ func main() {
 		}
 		server.HandleHttpReq(w, req, store)
 	})
+	server.Router().HandleFunc("/query/config", server.HandleHTTPQueryConfig)
 	server.Router().HandleFunc("/info", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Add("content-type", "application/json")
 		info := Info{
