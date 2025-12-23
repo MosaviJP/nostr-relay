@@ -379,6 +379,46 @@ func randomHex(n int) string {
 	return string(out)
 }
 
+const traceIDContextKey = "amzn-trace-id"
+
+func traceIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v := ctx.Value(traceIDContextKey); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+type traceIDHandler struct {
+	handler slog.Handler
+}
+
+func (h traceIDHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.handler.Enabled(ctx, level)
+}
+
+func (h traceIDHandler) Handle(ctx context.Context, r slog.Record) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if traceID := traceIDFromContext(ctx); traceID != "" {
+		r.AddAttrs(slog.String("trace_id", traceID))
+	}
+	return h.handler.Handle(ctx, r)
+}
+
+func (h traceIDHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return traceIDHandler{handler: h.handler.WithAttrs(attrs)}
+}
+
+func (h traceIDHandler) WithGroup(name string) slog.Handler {
+	return traceIDHandler{handler: h.handler.WithGroup(name)}
+}
+
 func (r *Relay) AcceptEvent(ctx context.Context, evt *nostr.Event) (bool, string) {
 	if evt.CreatedAt > nostr.Now()+30*60 {
 		return false, ""
@@ -412,13 +452,13 @@ func (r *Relay) AcceptEvent(ctx context.Context, evt *nostr.Event) (bool, string
 		return false, ""
 	}
 
-	slog.Debug("AcceptEvent", "event", []any{"EVENT", evt})
+	slog.DebugContext(ctx, "AcceptEvent", "event", []any{"EVENT", evt})
 	return true, ""
 }
 
 func (r *Relay) AcceptReq(ctx context.Context, id string, filters nostr.Filters, auto string) bool {
 	if len(filters) > relayLimitationDocument.MaxFilters {
-		slog.Debug("AcceptReq", "limit", fmt.Sprintf("filters is limited as %d (but %d)", relayLimitationDocument.MaxFilters, len(filters)))
+		slog.DebugContext(ctx, "AcceptReq", "limit", fmt.Sprintf("filters is limited as %d (but %d)", relayLimitationDocument.MaxFilters, len(filters)))
 		return false
 	}
 	pubkey := auto
@@ -430,12 +470,12 @@ func (r *Relay) AcceptReq(ctx context.Context, id string, filters nostr.Filters,
 		}
 	}
 	// Single debug line with origin pubkey in message
-	slog.Debug("AcceptReq from ["+pubkey+"]", "req", []any{"REQ", id, filters})
+	slog.DebugContext(ctx, "AcceptReq from ["+pubkey+"]", "req", []any{"REQ", id, filters})
 	return true
 }
 
 var relayLimitationDocument = &nip11.RelayLimitationDocument{
-	MaxMessageLength: 8242880,
+	MaxMessageLength: 82428800,
 	MaxSubscriptions: 20,    //
 	MaxFilters:       30,    //
 	MaxLimit:         10000,   //
@@ -576,9 +616,10 @@ func envDef(name, def string) string {
 }
 
 func init() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+	base := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
-	})))
+	})
+	slog.SetDefault(slog.New(traceIDHandler{handler: base}))
 }
 
 // skipEventFunc 检查事件是否已过期（基于expiration标签）
