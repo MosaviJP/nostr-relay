@@ -379,13 +379,26 @@ func randomHex(n int) string {
 	return string(out)
 }
 
-const traceIDContextKey = "amzn-trace-id"
+const traceIDContextKey = "trace-id"
+const rootTraceIDContextKey = "root-trace-id"
 
 func traceIDFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
 	if v := ctx.Value(traceIDContextKey); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func rootTraceIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v := ctx.Value(rootTraceIDContextKey); v != nil {
 		if s, ok := v.(string); ok {
 			return s
 		}
@@ -407,6 +420,9 @@ func (h traceIDHandler) Handle(ctx context.Context, r slog.Record) error {
 	}
 	if traceID := traceIDFromContext(ctx); traceID != "" {
 		r.AddAttrs(slog.String("trace_id", traceID))
+	}
+	if rootTraceID := rootTraceIDFromContext(ctx); rootTraceID != "" {
+		r.AddAttrs(slog.String("root_trace_id", rootTraceID))
 	}
 	return h.handler.Handle(ctx, r)
 }
