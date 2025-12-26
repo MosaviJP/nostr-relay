@@ -42,13 +42,13 @@ const version = "0.0.200"
 var revision = "HEAD"
 
 var (
-	_ relayer.Relay         = (*Relay)(nil)
-	_ relayer.ReqAccepter   = (*Relay)(nil)
-	_ relayer.Informationer = (*Relay)(nil)
-	_ relayer.Logger        = (*Relay)(nil)
-	_ relayer.Auther        = (*Relay)(nil)
+	_ relayer.Relay            = (*Relay)(nil)
+	_ relayer.ReqAccepter      = (*Relay)(nil)
+	_ relayer.Informationer    = (*Relay)(nil)
+	_ relayer.Logger           = (*Relay)(nil)
+	_ relayer.Auther           = (*Relay)(nil)
 	_ relayer.EventBroadcaster = (*Relay)(nil)
-	_ relayer.Injector          = (*Relay)(nil)
+	_ relayer.Injector         = (*Relay)(nil)
 
 	//go:embed static
 	assets embed.FS
@@ -60,42 +60,43 @@ type GroupManagementConfig struct {
 }
 
 type Relay struct {
-	driverName        string
-	sqlite3Storage    *sqlite3.SQLite3Backend
-	postgresStorage   *postgresql.PostgresBackend
-	mysqlStorage      *mysql.MySQLBackend
-	opensearchStorage *opensearch.OpensearchStorage
+	driverName            string
+	sqlite3Storage        *sqlite3.SQLite3Backend
+	postgresStorage       *postgresql.PostgresBackend
+	mysqlStorage          *mysql.MySQLBackend
+	opensearchStorage     *opensearch.OpensearchStorage
 	postgresReaderStorage *postgresql.PostgresBackend
 
-	serviceURL           string
-	mu                   sync.Mutex
-	allowlist            []string
-	blocklist            []string
+	serviceURL string
+	mu         sync.Mutex
+	allowlist  []string
+	blocklist  []string
 
-    // Redis Pub/Sub (optional) for cross-instance event fanout
-    redisClient    *redis.Client
-    redisSub       *redis.PubSub
-    redisChannel   string
-    instanceID     string
-    // sink channel exposed to relayer.Injector
-    injectCh       chan nostr.Event
-    // internal queue with enqueue time for TTL-based dropping
-    injectQueue    chan injectedEvent
-    injectTTL      time.Duration
-    injectQueueCap int
-    injectChCap    int
+	// Redis Pub/Sub (optional) for cross-instance event fanout
+	redisClient  *redis.Client
+	redisSub     *redis.PubSub
+	redisChannel string
+	instanceID   string
+	// sink channel exposed to relayer.Injector
+	injectCh chan nostr.Event
+	// internal queue with enqueue time for TTL-based dropping
+	injectQueue    chan injectedEvent
+	injectTTL      time.Duration
+	injectQueueCap int
+	injectChCap    int
 
-    // redis timeouts
-    redisDialTimeout time.Duration
-    redisRWTimeout   time.Duration
-    redisOpTimeout   time.Duration
-	
+	// redis timeouts
+	redisDialTimeout time.Duration
+	redisRWTimeout   time.Duration
+	redisOpTimeout   time.Duration
+
 	// Group bot configuration
-	botPrivateKey        string
+	botPrivateKey string
 
 	// Group management schema (e.g., moss_api, api)
-	groupSchema          string
+	groupSchema string
 }
+
 // ReaderStorage 返回只读库（如有），否则返回 nil
 func (r *Relay) ReaderStorage(ctx context.Context) eventstore.Store {
 	switch r.driverName {
@@ -108,6 +109,7 @@ func (r *Relay) ReaderStorage(ctx context.Context) eventstore.Store {
 		return nil
 	}
 }
+
 // ReaderDB returns the read-only DB if available, otherwise fallback to main DB
 func (r *Relay) ReaderDB() *sqlx.DB {
 	if r.driverName == "postgresql" && r.postgresReaderStorage != nil && r.postgresReaderStorage.DB != nil {
@@ -163,8 +165,8 @@ func (r *Relay) Init() error {
 
 // redisEventEnvelope is the message sent over Redis
 type redisEventEnvelope struct {
-	Instance string	  `json:"instance"`
-	Event	nostr.Event `json:"event"`
+	Instance string      `json:"instance"`
+	Event    nostr.Event `json:"event"`
 }
 
 // injectedEvent tracks when the message entered local queue to enforce TTL
@@ -217,40 +219,40 @@ func (r *Relay) initRedisPubSubFromEnv() {
 	}
 	username := os.Getenv("NOSTR_RELAY_REDIS_USERNAME")
 
-    // Timeouts (configurable)
-    dialTOms := 5000
-    if s := os.Getenv("NOSTR_RELAY_REDIS_DIAL_TIMEOUT_MS"); s != "" {
-        if n, err := strconv.Atoi(s); err == nil && n > 0 {
-            dialTOms = n
-        }
-    }
-    rwTOms := 5000
-    if s := os.Getenv("NOSTR_RELAY_REDIS_RW_TIMEOUT_MS"); s != "" {
-        if n, err := strconv.Atoi(s); err == nil && n > 0 {
-            rwTOms = n
-        }
-    }
-    opTOms := 5000
-    if s := os.Getenv("NOSTR_RELAY_REDIS_OP_TIMEOUT_MS"); s != "" {
-        if n, err := strconv.Atoi(s); err == nil && n > 0 {
-            opTOms = n
-        }
-    }
+	// Timeouts (configurable)
+	dialTOms := 5000
+	if s := os.Getenv("NOSTR_RELAY_REDIS_DIAL_TIMEOUT_MS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			dialTOms = n
+		}
+	}
+	rwTOms := 5000
+	if s := os.Getenv("NOSTR_RELAY_REDIS_RW_TIMEOUT_MS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			rwTOms = n
+		}
+	}
+	opTOms := 5000
+	if s := os.Getenv("NOSTR_RELAY_REDIS_OP_TIMEOUT_MS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			opTOms = n
+		}
+	}
 
-    r.redisDialTimeout = time.Duration(dialTOms) * time.Millisecond
-    r.redisRWTimeout = time.Duration(rwTOms) * time.Millisecond
-    r.redisOpTimeout = time.Duration(opTOms) * time.Millisecond
+	r.redisDialTimeout = time.Duration(dialTOms) * time.Millisecond
+	r.redisRWTimeout = time.Duration(rwTOms) * time.Millisecond
+	r.redisOpTimeout = time.Duration(opTOms) * time.Millisecond
 
-    r.redisClient = redis.NewClient(&redis.Options{
-        Addr:         addr,
-        Username:     username,
-        Password:     password,
-        DB:           db,
-        TLSConfig:    tlsConf,
-        DialTimeout:  r.redisDialTimeout,
-        ReadTimeout:  r.redisRWTimeout,
-        WriteTimeout: r.redisRWTimeout,
-    })
+	r.redisClient = redis.NewClient(&redis.Options{
+		Addr:         addr,
+		Username:     username,
+		Password:     password,
+		DB:           db,
+		TLSConfig:    tlsConf,
+		DialTimeout:  r.redisDialTimeout,
+		ReadTimeout:  r.redisRWTimeout,
+		WriteTimeout: r.redisRWTimeout,
+	})
 	r.redisChannel = channel
 	r.instanceID = inst
 	// TTL and buffer sizes (configurable)
@@ -276,17 +278,17 @@ func (r *Relay) initRedisPubSubFromEnv() {
 	r.injectCh = make(chan nostr.Event, r.injectChCap)
 	r.injectQueue = make(chan injectedEvent, r.injectQueueCap)
 
-    // verify connectivity (non-fatal on failure)
-    ctx, cancel := context.WithTimeout(context.Background(), r.redisOpTimeout)
+	// verify connectivity (non-fatal on failure)
+	ctx, cancel := context.WithTimeout(context.Background(), r.redisOpTimeout)
 	defer cancel()
-		if err := r.redisClient.Ping(ctx).Err(); err != nil {
-			slog.Warn("redis disabled: ping failed", "error", err)
-			r.redisClient = nil
-			close(r.injectCh)
-			r.injectCh = nil
-			r.injectQueue = nil
-			return
-		}
+	if err := r.redisClient.Ping(ctx).Err(); err != nil {
+		slog.Warn("redis disabled: ping failed", "error", err)
+		r.redisClient = nil
+		close(r.injectCh)
+		r.injectCh = nil
+		r.injectQueue = nil
+		return
+	}
 
 	r.redisSub = r.redisClient.Subscribe(context.Background(), r.redisChannel)
 	ch := r.redisSub.Channel()
@@ -300,36 +302,36 @@ func (r *Relay) initRedisPubSubFromEnv() {
 			if env.Instance == r.instanceID {
 				continue // ignore our own publishes
 			}
-				if r.injectQueue != nil {
-					ie := injectedEvent{evt: env.Event, enqueuedAt: time.Now()}
-					select {
-					case r.injectQueue <- ie:
-						// enqueued
-					default:
-						// queue full: drop newest to avoid backpressure to redis
-						slog.Warn("inject queue full; dropping event")
-					}
-				}
-		}
-		}()
-		// Dispatcher: attempt to deliver before TTL; drop if waiting exceeds TTL
-		go func() {
-			for ie := range r.injectQueue {
-				age := time.Since(ie.enqueuedAt)
-				if age >= r.injectTTL {
-					// expired in queue
-					continue
-				}
-				remaining := r.injectTTL - age
+			if r.injectQueue != nil {
+				ie := injectedEvent{evt: env.Event, enqueuedAt: time.Now()}
 				select {
-				case r.injectCh <- ie.evt:
-					// delivered
-				case <-time.After(remaining):
-					// timed out waiting downstream
+				case r.injectQueue <- ie:
+					// enqueued
+				default:
+					// queue full: drop newest to avoid backpressure to redis
+					slog.Warn("inject queue full; dropping event")
 				}
 			}
-		}()
-		slog.Info("redis pubsub enabled", "addr", addr, "channel", channel, "instance", inst, "inject_ttl", r.injectTTL, "inject_queue_cap", r.injectQueueCap, "inject_ch_cap", r.injectChCap)
+		}
+	}()
+	// Dispatcher: attempt to deliver before TTL; drop if waiting exceeds TTL
+	go func() {
+		for ie := range r.injectQueue {
+			age := time.Since(ie.enqueuedAt)
+			if age >= r.injectTTL {
+				// expired in queue
+				continue
+			}
+			remaining := r.injectTTL - age
+			select {
+			case r.injectCh <- ie.evt:
+				// delivered
+			case <-time.After(remaining):
+				// timed out waiting downstream
+			}
+		}
+	}()
+	slog.Info("redis pubsub enabled", "addr", addr, "channel", channel, "instance", inst, "inject_ttl", r.injectTTL, "inject_queue_cap", r.injectQueueCap, "inject_ch_cap", r.injectChCap)
 }
 
 // BroadcastEvent implements relayer.EventBroadcaster
@@ -343,15 +345,15 @@ func (r *Relay) BroadcastEvent(evt *nostr.Event) {
 		slog.Warn("failed to marshal event for redis", "error", err)
 		return
 	}
-    to := r.redisOpTimeout
-    if to <= 0 {
-        to = 5 * time.Second
-    }
-    ctx, cancel := context.WithTimeout(context.Background(), to)
-    defer cancel()
-    if err := r.redisClient.Publish(ctx, r.redisChannel, payload).Err(); err != nil {
-        slog.Warn("redis publish failed", "error", err)
-    }
+	to := r.redisOpTimeout
+	if to <= 0 {
+		to = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), to)
+	defer cancel()
+	if err := r.redisClient.Publish(ctx, r.redisChannel, payload).Err(); err != nil {
+		slog.Warn("redis publish failed", "error", err)
+	}
 }
 
 // InjectEvents implements relayer.Injector to feed remote events to relayer
@@ -492,12 +494,12 @@ func (r *Relay) AcceptReq(ctx context.Context, id string, filters nostr.Filters,
 
 var relayLimitationDocument = &nip11.RelayLimitationDocument{
 	MaxMessageLength: 82428800,
-	MaxSubscriptions: 20,    //
-	MaxFilters:       30,    //
-	MaxLimit:         10000,   //
-	MaxSubidLength:   100,   //
+	MaxSubscriptions: 20,       //
+	MaxFilters:       30,       //
+	MaxLimit:         10000,    //
+	MaxSubidLength:   100,      //
 	MaxEventTags:     100000,   //
-	MaxContentLength: 6000000, //
+	MaxContentLength: 60000000, //
 	MinPowDifficulty: 30,
 	AuthRequired:     false,
 	PaymentRequired:  false,
@@ -654,15 +656,15 @@ func skipEventFunc(ev *nostr.Event) bool {
 
 // GetGroupManagementConfig returns the group management configuration
 func (r *Relay) GetGroupManagementConfig() string {
-    return r.botPrivateKey
+	return r.botPrivateKey
 }
 
 // GetGroupManagementSchema returns the configured schema for group management tables
 func (r *Relay) GetGroupManagementSchema() string {
-    if r.groupSchema == "" {
-        return "moss_api"
-    }
-    return r.groupSchema
+	if r.groupSchema == "" {
+		return "moss_api"
+	}
+	return r.groupSchema
 }
 
 func main() {
@@ -677,14 +679,18 @@ func main() {
 	flag.StringVar(&databaseURL, "database", envDef("DATABASE_URL", "nostr-relay.sqlite"), "connection string")
 	flag.StringVar(&roDatabaseURL, "ro-database", envDef("RO_DATABASE_URL", ""), "read-only database connection string")
 	flag.StringVar(&r.serviceURL, "service-url", envDef("SERVICE_URL", ""), "service URL")
-    flag.StringVar(&r.botPrivateKey, "bot-private-key", envDef("BOT_PRIVATE_KEY", ""), "bot private key for group management")
-    // group management schema flag (defaults: GROUP_MGMT_SCHEMA or RELAY_GROUP_SCHEMA or moss_api)
-    defaultSchema := func() string {
-        if v := os.Getenv("GROUP_MGMT_SCHEMA"); v != "" { return v }
-        if v := os.Getenv("RELAY_GROUP_SCHEMA"); v != "" { return v }
-        return "moss_api"
-    }()
-    flag.StringVar(&r.groupSchema, "group-mgmt-schema", defaultSchema, "schema name for group management tables (e.g., moss_api, api)")
+	flag.StringVar(&r.botPrivateKey, "bot-private-key", envDef("BOT_PRIVATE_KEY", ""), "bot private key for group management")
+	// group management schema flag (defaults: GROUP_MGMT_SCHEMA or RELAY_GROUP_SCHEMA or moss_api)
+	defaultSchema := func() string {
+		if v := os.Getenv("GROUP_MGMT_SCHEMA"); v != "" {
+			return v
+		}
+		if v := os.Getenv("RELAY_GROUP_SCHEMA"); v != "" {
+			return v
+		}
+		return "moss_api"
+	}()
+	flag.StringVar(&r.groupSchema, "group-mgmt-schema", defaultSchema, "schema name for group management tables (e.g., moss_api, api)")
 	flag.BoolVar(&ver, "version", false, "show version")
 	flag.Parse()
 
