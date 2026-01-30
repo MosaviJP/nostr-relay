@@ -724,17 +724,21 @@ func main() {
 		}
 	case "postgresql":
 		r.postgresStorage = &postgresql.PostgresBackend{
-			DatabaseURL:      databaseURL,
-			QueryLimit:       relayLimitationDocument.MaxLimit,
-			QueryTagsLimit:   relayLimitationDocument.MaxEventTags,
-			KeepRecentEvents: true,
+			DatabaseURL:           databaseURL,
+			QueryLimit:            relayLimitationDocument.MaxLimit,
+			QueryTagsLimit:        relayLimitationDocument.MaxEventTags,
+			KeepRecentEvents:      true,
+			EnableQueryComparison: os.Getenv("ENABLE_QUERY_COMPARISON") == "true",
+			UseOldQuery:          os.Getenv("USE_OLD_QUERY") == "true",
 		}
 		if roDatabaseURL != "" {
 			r.postgresReaderStorage = &postgresql.PostgresBackend{
-				DatabaseURL:      roDatabaseURL,
-				QueryLimit:       relayLimitationDocument.MaxLimit,
-				QueryTagsLimit:   relayLimitationDocument.MaxEventTags,
-				KeepRecentEvents: true,
+				DatabaseURL:           roDatabaseURL,
+				QueryLimit:            relayLimitationDocument.MaxLimit,
+				QueryTagsLimit:        relayLimitationDocument.MaxEventTags,
+				KeepRecentEvents:      true,
+				EnableQueryComparison: os.Getenv("ENABLE_QUERY_COMPARISON") == "true",
+				UseOldQuery:          os.Getenv("USE_OLD_QUERY") == "true",
 			}
 			// 只读库初始化：不执行DDL，只赋默认limit
 			if err := r.postgresReaderStorage.InitReadOnly(); err != nil {
