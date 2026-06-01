@@ -16,7 +16,9 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MosaviJP/eventstore"
@@ -95,6 +97,10 @@ type Relay struct {
 
 	// Group management schema (e.g., moss_api, api)
 	groupSchema string
+
+	// Version check config (runtime-configurable)
+	versionCheckEnabled atomic.Int32 // 0=disabled, 1=enabled
+	versionCheckMinVer  atomic.Value // stores string: minimum allowed client version
 }
 
 // ReaderStorage 返回只读库（如有），否则返回 nil
@@ -442,6 +448,23 @@ func (r *Relay) AcceptEvent(ctx context.Context, evt *nostr.Event) (bool, string
 		return false, ""
 	}
 
+	// Check client version from User-Agent header (runtime-configurable)
+	// Only block if: version is too old AND kind is in restricted list
+	if r.versionCheckEnabled.Load() == 1 {
+		if ua := relayer.GetUserAgent(ctx); ua != "" {
+			minVer := "1.8.0"
+			if v, ok := r.versionCheckMinVer.Load().(string); ok && v != "" {
+				minVer = v
+			}
+			if v := parseUserAgentVersion(ua); v != "" && isVersionLessThan(v, minVer) {
+				// Only block if kind is in restricted list
+				if isRestrictedKind(evt.Kind) {
+					return false, "blocked: client version too old for this event kind, please upgrade to " + minVer + " or later"
+				}
+			}
+		}
+	}
+
 	if nip70.IsProtected(*evt) {
 		pubkey, ok := relayer.GetAuthStatus(ctx)
 		if !ok {
@@ -472,6 +495,120 @@ func (r *Relay) AcceptEvent(ctx context.Context, evt *nostr.Event) (bool, string
 
 	slog.DebugContext(ctx, "AcceptEvent", "event", []any{"EVENT", evt})
 	return true, ""
+}
+
+// parseUserAgentVersion extracts the version string from a User-Agent header.
+// It looks for "Version/X.Y.Z" first, then falls back to "AppName/X.Y.Z".
+func parseUserAgentVersion(ua string) string {
+	if idx := strings.Index(ua, "Version/"); idx != -1 {
+		rest := ua[idx+8:]
+		if end := strings.IndexAny(rest, " \t;()"); end != -1 {
+			return rest[:end]
+		}
+		return rest
+	}
+	for _, token := range strings.Fields(ua) {
+		parts := strings.SplitN(token, "/", 2)
+		if len(parts) == 2 && parts[1] != "" {
+			return strings.TrimRight(parts[1], ";")
+		}
+	}
+	return ""
+}
+
+// isVersionLessThan returns true if version v is strictly less than min (semver X.Y.Z).
+func isVersionLessThan(v, min string) bool {
+	vParts := strings.SplitN(v, ".", 3)
+	minParts := strings.SplitN(min, ".", 3)
+	for i := 0; i < 3; i++ {
+		var vi, mi int
+		if i < len(vParts) {
+			vi, _ = strconv.Atoi(vParts[i])
+		}
+		if i < len(minParts) {
+			mi, _ = strconv.Atoi(minParts[i])
+		}
+		if vi < mi {
+			return true
+		}
+		if vi > mi {
+			return false
+		}
+	}
+	return false
+}
+
+// restrictedKinds defines event kinds that require minimum client version
+var restrictedKinds = map[int]bool{
+	1059:  true,
+	3046:  true,
+	3047:  true,
+	20041: true,
+	20042: true,
+	39304: true,
+	39305: true,
+}
+
+// isRestrictedKind returns true if the kind requires version check
+func isRestrictedKind(kind int) bool {
+	return restrictedKinds[kind]
+}
+
+// VersionCheckConfigRequest is the request body for /version-check/config
+type VersionCheckConfigRequest struct {
+	Enabled *bool  `json:"enabled"`
+	MinVer  string `json:"min_ver"`
+}
+
+// VersionCheckConfigResponse is the response body for /version-check/config GET
+type VersionCheckConfigResponse struct {
+	Enabled bool   `json:"enabled"`
+	MinVer  string `json:"min_ver"`
+}
+
+// HandleVersionCheckConfig handles GET/POST /version-check/config
+// GET  — returns current config
+// POST — updates config (fields are optional; omit to leave unchanged)
+func (r *Relay) HandleVersionCheckConfig(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch req.Method {
+	case http.MethodGet:
+		minVer := "1.8.0"
+		if v, ok := r.versionCheckMinVer.Load().(string); ok && v != "" {
+			minVer = v
+		}
+		json.NewEncoder(w).Encode(VersionCheckConfigResponse{
+			Enabled: r.versionCheckEnabled.Load() == 1,
+			MinVer:  minVer,
+		})
+	case http.MethodPost:
+		var body VersionCheckConfigRequest
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+			return
+		}
+		if body.Enabled != nil {
+			if *body.Enabled {
+				r.versionCheckEnabled.Store(1)
+			} else {
+				r.versionCheckEnabled.Store(0)
+			}
+		}
+		if body.MinVer != "" {
+			r.versionCheckMinVer.Store(body.MinVer)
+		}
+		// respond with updated config
+		minVer := "1.8.0"
+		if v, ok := r.versionCheckMinVer.Load().(string); ok && v != "" {
+			minVer = v
+		}
+		json.NewEncoder(w).Encode(VersionCheckConfigResponse{
+			Enabled: r.versionCheckEnabled.Load() == 1,
+			MinVer:  minVer,
+		})
+	default:
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	}
 }
 
 func (r *Relay) AcceptReq(ctx context.Context, id string, filters nostr.Filters, auto string) bool {
@@ -771,6 +908,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create server: %v", err)
 	}
+	// Initialize version check config (enabled by default; min version = "1.8.0")
+	r.versionCheckEnabled.Store(1)
+	r.versionCheckMinVer.Store("1.8.0")
 	r.ready()
 
 	if db := r.DB(); db != nil {
@@ -790,6 +930,7 @@ func main() {
 		server.HandleHttpReq(w, req, store)
 	})
 	server.Router().HandleFunc("/query/config", server.HandleHTTPQueryConfig)
+	server.Router().HandleFunc("/version-check/config", r.HandleVersionCheckConfig)
 	server.Router().HandleFunc("/info", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Add("content-type", "application/json")
 		info := Info{
