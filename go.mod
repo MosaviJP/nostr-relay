@@ -4,7 +4,7 @@ go 1.24.1
 
 require (
 	github.com/MosaviJP/eventstore v0.100.0
-	github.com/MosaviJP/relayer/v2 v2.100.0
+	github.com/MosaviJP/relayer/v2 v2.100.1
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/nbd-wtf/go-nostr v0.51.8
