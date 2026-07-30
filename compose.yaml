@@ -1,35 +1,30 @@
-version: '2'
-
 services:
-  nostr-relay:
+  relay:
     build: .
-    depends_on:
-      litestream-backup:
-        condition: service_healthy
-    restart: always
+    restart: unless-stopped
     ports:
       - "7447:7447"
-    volumes_from:
-      - litestream-restore:rw
-  litestream-backup:
-    image: litestream/litestream
-    volumes_from:
-      - litestream-restore:rw
-    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      DRIVER: postgresql
+      DATABASE_URL: postgres://nostr:nostr@db:5432/nostr?sslmode=disable
     depends_on:
-      litestream-restore:
-        condition: service_completed_successfully
-    healthcheck:
-      test: /usr/local/bin/litestream restore -if-db-not-exists -if-replica-exists -config /opt/litestream/litestream.yaml /data/nostr-relay.sqlite
-      timeout: 10m
-      retries: 1
-    command:
-      - /usr/local/bin/litestream replicate -config /opt/litestream/litestream.yaml
-  litestream-restore:
-    image: litestream/litestream
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nostr
+      POSTGRES_PASSWORD: nostr
+      POSTGRES_DB: nostr
     volumes:
-      - .:/data
-      - .:/opt/litestream
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - /usr/local/bin/litestream restore -if-db-not-exists -if-replica-exists -config /opt/litestream/litestream.yaml /data/nostr-relay.sqlite && chmod 777 /data/nostr-relay.sqlite || true
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nostr -d nostr"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  db-data:
