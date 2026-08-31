@@ -90,6 +90,9 @@ type Relay struct {
 	redisRWTimeout   time.Duration
 	redisOpTimeout   time.Duration
 
+	// cross-instance fanout metrics
+	fanout fanoutMetrics
+
 	// Group bot configuration
 	botPrivateKey string
 
@@ -167,12 +170,17 @@ func (r *Relay) Init() error {
 type redisEventEnvelope struct {
 	Instance string      `json:"instance"`
 	Event    nostr.Event `json:"event"`
+	// TsUS is the publish time (UnixMicro); receivers use it to measure
+	// cross-instance fanout latency. Messages from older instances lack the
+	// field (=0) and are skipped in latency stats.
+	TsUS int64 `json:"ts_us,omitempty"`
 }
 
 // injectedEvent tracks when the message entered local queue to enforce TTL
 type injectedEvent struct {
-	evt        nostr.Event
-	enqueuedAt time.Time
+	evt         nostr.Event
+	enqueuedAt  time.Time
+	publishedUS int64 // publisher UnixMicro (envelope ts_us; 0 = unknown)
 }
 
 // initRedisPubSubFromEnv initializes Redis Pub/Sub if env vars are set.
@@ -296,19 +304,22 @@ func (r *Relay) initRedisPubSubFromEnv() {
 		for msg := range ch {
 			var env redisEventEnvelope
 			if err := json.Unmarshal([]byte(msg.Payload), &env); err != nil {
+				r.fanout.UnmarshalFail.Add(1)
 				slog.Warn("redis message unmarshal failed", "error", err)
 				continue
 			}
 			if env.Instance == r.instanceID {
 				continue // ignore our own publishes
 			}
+			r.fanout.RecvTotal.Add(1)
 			if r.injectQueue != nil {
-				ie := injectedEvent{evt: env.Event, enqueuedAt: time.Now()}
+				ie := injectedEvent{evt: env.Event, enqueuedAt: time.Now(), publishedUS: env.TsUS}
 				select {
 				case r.injectQueue <- ie:
 					// enqueued
 				default:
 					// queue full: drop newest to avoid backpressure to redis
+					r.fanout.DropQueueFull.Add(1)
 					slog.Warn("inject queue full; dropping event")
 				}
 			}
@@ -320,17 +331,24 @@ func (r *Relay) initRedisPubSubFromEnv() {
 			age := time.Since(ie.enqueuedAt)
 			if age >= r.injectTTL {
 				// expired in queue
+				r.fanout.DropExpired.Add(1)
 				continue
 			}
 			remaining := r.injectTTL - age
 			select {
 			case r.injectCh <- ie.evt:
 				// delivered
+				r.fanout.Delivered.Add(1)
+				if ie.publishedUS > 0 {
+					r.fanout.observeLatency(time.Now().UnixMicro() - ie.publishedUS)
+				}
 			case <-time.After(remaining):
 				// timed out waiting downstream
+				r.fanout.DropTimeout.Add(1)
 			}
 		}
 	}()
+	go r.fanout.runLogger(context.Background())
 	slog.Info("redis pubsub enabled", "addr", addr, "channel", channel, "instance", inst, "inject_ttl", r.injectTTL, "inject_queue_cap", r.injectQueueCap, "inject_ch_cap", r.injectChCap)
 }
 
@@ -339,7 +357,7 @@ func (r *Relay) BroadcastEvent(evt *nostr.Event) {
 	if r == nil || r.redisClient == nil || evt == nil {
 		return
 	}
-	env := redisEventEnvelope{Instance: r.instanceID, Event: *evt}
+	env := redisEventEnvelope{Instance: r.instanceID, Event: *evt, TsUS: time.Now().UnixMicro()}
 	payload, err := json.Marshal(env)
 	if err != nil {
 		slog.Warn("failed to marshal event for redis", "error", err)
@@ -352,7 +370,10 @@ func (r *Relay) BroadcastEvent(evt *nostr.Event) {
 	ctx, cancel := context.WithTimeout(context.Background(), to)
 	defer cancel()
 	if err := r.redisClient.Publish(ctx, r.redisChannel, payload).Err(); err != nil {
+		r.fanout.PubFail.Add(1)
 		slog.Warn("redis publish failed", "error", err)
+	} else {
+		r.fanout.PubOK.Add(1)
 	}
 }
 
