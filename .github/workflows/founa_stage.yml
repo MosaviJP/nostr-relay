@@ -1,0 +1,194 @@
+# founa(换品牌新体系)stage 部署。MOS-3743 / 父工单 MOS-3737。
+#
+# 触发只挂 workflow_dispatch:
+#   本仓库既有的三条 workflow 都不做 ECS 部署 —— build.yaml 只跑 test/build,
+#   docker.yaml 与 release.yaml 只在 v* tag 上推 ghcr.io 镜像与二进制。
+#   mosavi 侧的 ECS 镜像是人工推到 ECR 的(mosavi-stage-relay-ecr 最近一次推送
+#   2026-09-16,而仓库 CI 从不推 ECR)。founa 侧改为由本 workflow 构建并推 founa-relay,
+#   与其余 founa 服务一致;不挂 push 以免每次合入都重部。
+#
+# 与其余 founa 服务 workflow 的差异,均因 relay 自身形态:
+#   - 容器端口 7447,不是 80(main.go 默认 0.0.0.0:7447)。ALB 8001 是 listener 端口。
+#   - 健康检查路径 /,不是 /health —— 本服务没有 /health 处理器,
+#     根路径由 relayer 库返回 NIP-11 文档。与现网 mosavi-stage-relay-port 同口径。
+#   - 配置不走 ENV_CONTENTS 整份 JSON —— relay 用 flag/os.Getenv 逐项读,
+#     没有 viper 那样的整份解析入口。改配置只动 founa-stage-relay-env 一处:
+#     task-def 的 environment 为空, 全部配置项经 secrets 段的 JSON key 选择器
+#     从该 secret 注入, 形如 arn:...:secret:founa-stage-relay-env:NODE_ENV::
+#     与同为环境变量型的 founa-stage-official-backend-app 同一形态
+#     (其 environment 亦为空, 44 项全部走 JSON key 注入)。
+#   - 构建不需要 GO_PRIVATE_SSH_KEY:依赖的 MosaviJP/eventstore 与 MosaviJP/relayer
+#     均为公开仓库,Dockerfile 也没有 secret 挂载。
+#
+# 前置(不由本 workflow 创建):
+#   target group founa-stage-relay-tg(target_port 7447)与 ALB 8001 listener
+#     —— 由 Founa-Terraform 创建,本 workflow 只查询 ARN 并校验已挂 listener;
+#   Secrets Manager 的 founa-stage-relay-env —— 需运维先建好并填入全部配置项;
+#   部署角色 founa-stage-deploy-relay-role —— 需在 Founa-Terraform 的
+#     service_deploy_repos 中登记后生成,并配到 founa-stage Environment 的 vars.AWS_ROLE。
+
+name: deploy founa stage
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: founa-relay          # 三环境共用一个仓库,靠 tag 区分
+  IMAGE_TAG: stage-latest
+  ECS_SERVICE: relay
+  ECS_CLUSTER: founa-stage-ecs-cluster
+  ECS_TASK_DEFINITION: ./deploy/founa-task-def-stage.json
+  CONTAINER_NAME: relay
+  TARGET_GROUP_NAME: founa-stage-relay-tg
+  LOG_GROUP: /ecs/founa-stage/relay
+  DESIRED_COUNT: 1
+  SUBNETS: subnet-0c1e1636fa223f91a,subnet-0480378f6412c8c26,subnet-03ac5050128f7e62d
+  SECURITY_GROUPS: sg-08170fc8b7f11835b
+
+# OIDC 部署: 必须有 id-token: write, 否则拿不到 OIDC token。
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: founa-stage-relay
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy founa stage
+    runs-on: ubuntu-latest
+    # 挂 Environment 是为了拿到 environment 级的 vars.AWS_ROLE,不是审批门。
+    environment: founa-stage
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHub-OIDC-founa-stage-relay
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ECR 仓库不存在时创建。必须排在 docker push 之前。
+      - name: Ensure ECR repository
+        run: |
+          if aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1; then
+            echo "ECR 仓库 $ECR_REPOSITORY 已存在"
+          else
+            echo "创建 ECR 仓库 $ECR_REPOSITORY"
+            aws ecr create-repository --repository-name "$ECR_REPOSITORY" \
+              --image-scanning-configuration scanOnPush=true \
+              --image-tag-mutability MUTABLE >/dev/null
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Expose GitHub runtime for buildx cache
+        uses: crazy-max/ghaction-github-runtime@v3
+
+      # 平台 linux/amd64:与 task-def 的 runtimePlatform X86_64 一致。
+      - name: Build and push
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker buildx build \
+            --platform linux/amd64 \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --tag "$IMAGE" \
+            --push \
+            .
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "::notice::image=${IMAGE}"
+
+      - name: Render task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Ensure infrastructure and deploy
+        env:
+          TASK_DEF_FILE: ${{ steps.task-def.outputs.task-definition }}
+        run: |
+          set -euo pipefail
+          CONTAINER_PORT=7447
+
+          # --- CloudWatch log group ---
+          # 预建而非依赖 task-def 的 awslogs-create-group,
+          # 这样 task execution role 不需要 logs:CreateLogGroup 权限。
+          #
+          # 直接 create 并靠 ResourceAlreadyExistsException 判断已存在, 不用 DescribeLogGroups:
+          # 后者是 list 类 API, 评估的资源是 log-group::log-stream: (空名),
+          # 无法用具体的 log group ARN 做资源限定, 只能 Resource:"*"。
+          if ERR=$(aws logs create-log-group --log-group-name "$LOG_GROUP" 2>&1); then
+            echo "创建 log group $LOG_GROUP"
+          elif echo "$ERR" | grep -q 'ResourceAlreadyExistsException'; then
+            echo "log group $LOG_GROUP 已存在"
+          else
+            echo "$ERR" >&2
+            exit 1
+          fi
+
+          # --- target group ---
+          # TG 与 ALB listener 均由 Terraform 统一创建, 本 workflow 只查询 ARN。
+          if ! TG_ARN=$(aws elbv2 describe-target-groups --names "$TARGET_GROUP_NAME" \
+                          --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null); then
+            echo "target group $TARGET_GROUP_NAME 不存在。" >&2
+            echo "它由 Terraform 统一创建, 请先在 Founa-Terraform 中建出" >&2
+            echo "(alb_targets 加 relay = { alb_port = 8001, target_port = 7447 })。" >&2
+            exit 1
+          fi
+          echo "TG_ARN=$TG_ARN"
+
+          # ECS 不允许 service 绑定没有关联 load balancer 的 target group,
+          # 这里提前拦一下, 好过让 CreateService 抛 InvalidParameterException。
+          TG_LBS=$(aws elbv2 describe-target-groups --target-group-arns "$TG_ARN" \
+            --query 'TargetGroups[0].LoadBalancerArns' --output text)
+          if [ -z "$TG_LBS" ] || [ "$TG_LBS" = "None" ]; then
+            echo "target group $TARGET_GROUP_NAME 尚未挂到任何 ALB listener 上。" >&2
+            echo "ECS 要求 service 绑定的 TG 必须已关联 load balancer, 请先配置 8001 listener。" >&2
+            exit 1
+          fi
+
+          # --- task definition ---
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "file://$TASK_DEF_FILE" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "TASK_DEF_ARN=$TASK_DEF_ARN"
+
+          # --- ECS service ---
+          STATUS=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].status' --output text 2>/dev/null || echo MISSING)
+
+          if [ "$STATUS" = "ACTIVE" ]; then
+            echo "service $ECS_SERVICE 已存在, 更新到新的 task definition"
+            aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+              --task-definition "$TASK_DEF_ARN" >/dev/null
+          else
+            echo "service $ECS_SERVICE 不存在($STATUS), 创建"
+            aws ecs create-service \
+              --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" \
+              --task-definition "$TASK_DEF_ARN" \
+              --desired-count "$DESIRED_COUNT" \
+              --launch-type FARGATE \
+              --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=DISABLED}" \
+              --load-balancers "targetGroupArn=$TG_ARN,containerName=$CONTAINER_NAME,containerPort=$CONTAINER_PORT" \
+              --health-check-grace-period-seconds 60 >/dev/null
+          fi
+
+          echo "等待 service 稳定"
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
