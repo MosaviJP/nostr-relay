@@ -19,3 +19,8 @@ scripts/
 *.log
 bk/
 tool/
+
+# 部署配置需要纳管。上面的 *.json 是上游(mattn/nostr-relay)的通配规则,
+# 会把 deploy/ 下的 task definition 一并吞掉且不报错。
+!deploy/
+!deploy/*.json

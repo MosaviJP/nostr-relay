@@ -1,0 +1,76 @@
+{
+  "containerDefinitions": [
+    {
+      "name": "relay",
+      "image": "209085512950.dkr.ecr.ap-northeast-1.amazonaws.com/founa-relay:stage-latest",
+      "cpu": 1024,
+      "memory": 2048,
+      "portMappings": [
+        {
+          "name": "relay-7447-tcp",
+          "containerPort": 7447,
+          "hostPort": 7447,
+          "protocol": "tcp",
+          "appProtocol": "http"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        { "name": "NODE_ENV", "value": "stage" },
+        { "name": "NOSTR_RELAY_REDIS_ADDR", "value": "master.founa-stage-redis.fh8koi.apne1.cache.amazonaws.com:6379" },
+        { "name": "NOSTR_RELAY_REDIS_TLS", "value": "true" },
+        { "name": "NOSTR_RELAY_QUERY_POLICY_MODE", "value": "enforce" },
+        { "name": "NOSTR_RELAY_SCOPE_MODE", "value": "enforce" },
+        { "name": "NOSTR_RELAY_SCOPE_OBSERVE_KINDS", "value": "1059,1004,1405,32042,5,39305,39306,106" },
+        { "name": "NOSTR_RELAY_KIND0_LIMIT_PER_PUBKEY", "value": "0" },
+        { "name": "NOSTR_RELAY_SERVICE_PUBKEYS", "value": "__TBD_FOUNA_SERVICE_PUBKEY__" },
+        { "name": "GROUP_MGMT_SCHEMA", "value": "founa_api" },
+        { "name": "POSTGRES_USER", "value": "founa_admin" },
+        { "name": "POSTGRES_HOST", "value": "mosavi-stage-rds.cluster-cf8s8e4046kh.ap-northeast-1.rds.amazonaws.com" },
+        { "name": "POSTGRES_PORT", "value": "5432" },
+        { "name": "POSTGRES_DB", "value": "founa" },
+        { "name": "POSTGRES_OPTIONS", "value": "sslmode=require&search_path=founa_relay" }
+      ],
+      "environmentFiles": [],
+      "secrets": [
+        {
+          "name": "POSTGRES_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-stage-db-credentials-4gKqY0"
+        },
+        {
+          "name": "EXTERNAL_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-stage-relay-external-api-key"
+        },
+        {
+          "name": "BOT_PRIVATE_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-stage-relay-bot-private-key"
+        }
+      ],
+      "mountPoints": [],
+      "volumesFrom": [],
+      "ulimits": [],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/founa-stage/relay",
+          "awslogs-region": "ap-northeast-1",
+          "awslogs-stream-prefix": "ecs"
+        },
+        "secretOptions": []
+      }
+    }
+  ],
+  "family": "founa-stage-relay",
+  "taskRoleArn": "arn:aws:iam::209085512950:role/founa-stage-task-role",
+  "executionRoleArn": "arn:aws:iam::209085512950:role/founa-stage-task-execution-role",
+  "networkMode": "awsvpc",
+  "volumes": [],
+  "placementConstraints": [],
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  }
+}
