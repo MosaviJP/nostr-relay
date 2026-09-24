@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"sync"
@@ -688,6 +689,30 @@ func (r *Relay) GetGroupManagementSchema() string {
 	return r.groupSchema
 }
 
+// redactDSN 去掉连接串里的密码后再输出。
+//
+// 原先直接打印 databaseURL，密码明文进了容器日志 —— 该密码是多个服务共用的
+// RDS 凭据，凡有日志读权限者皆可取得。保留 host/库名/参数是有意的：
+// 「连到了哪个库」是排查启动问题的第一手信息。
+//
+// 解析失败时只回 "(unparsable)"，绝不回退到原串 —— 回退会让畸形连接串
+// 反而把密码打出来。
+func redactDSN(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "(unparsable)"
+	}
+	if u.User != nil {
+		if _, hasPW := u.User.Password(); hasPW {
+			u.User = url.UserPassword(u.User.Username(), "xxxxx")
+		}
+	}
+	return u.Redacted()
+}
+
 func main() {
 	var r Relay
 	var ver bool
@@ -735,7 +760,7 @@ func main() {
 		}()
 	}
 
-	fmt.Printf("DB url: %s\n", databaseURL)
+	fmt.Printf("DB: %s\n", redactDSN(databaseURL))
 	switch r.driverName {
 	case "sqlite3", "":
 		r.sqlite3Storage = &sqlite3.SQLite3Backend{
