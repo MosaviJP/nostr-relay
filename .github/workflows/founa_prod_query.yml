@@ -1,37 +1,12 @@
-# founa(换品牌新体系)stage 的 relay 【查询实例】部署。MOS-3768 / 父工单 MOS-3737。
+# founa(换品牌新体系)prod 的 relay 【查询实例】部署。MOS-3768 / 父工单 MOS-3737。
 #
-# 这是 relay 的第二个 ECS service,与 founa_stage.yml 部署的主实例【同一份代码、
-# 同一个 ECR 镜像】,只是配置不同、各挂各的 ALB 端口:
+# 与 founa_prod.yml 同一范式: 不构建镜像, 只部署 stage 验证过的 commit。
+# 两个实例跑同一个镜像, 正常情况下 image_tag 应与主实例填的是同一个值。
 #
-#   relay        ALB 8001   WS 长连接,客户端直连
-#   relay-query  ALB 8011   HTTP 查询,网关把 /v2/ws/query 去掉 /v2/ws 前缀后回源
-#
-# 照搬现网 mosavi 的形态。现网那个 service 叫 mosavi-<env>-relay-http-proxy-ecs-service,
-# 名字来自早期方案(独立的 MosaviJP/relay-http-proxy 仓库),但它从 revision 1 起跑的
-# 就是 relay 本体的镜像(容器名 relay、端口 7447),那个仓库的 CI 从未运行过、
-# stage 的 ECR 至今是空的。founa 侧不沿用那个误导性的名字,直接叫 relay-query。
-#
-# 与主实例 task-def 的差异只有三处(照搬现网 stage-relay-http-proxy:10):
-#   - 不注入 BOT_PRIVATE_KEY —— 查询实例不做需要服务号身份的事
-#   - 不注入 NOSTR_RELAY_REDIS_ADDR / _TLS —— 查询实例不参与 pubsub
-#   - 多一个 USE_OLD_QUERY
-# 除此之外必须与主实例【逐项一致】,包括 RELAY_EVENT_SCHEMA —— 两个实例读的是
-# 同一批表,schema 配置分叉会让查询实例查到另一个 schema(或掉到 public)。
-# 其余配置项与主实例共用 founa-stage-relay-env 一个 secret ——
-# 同一份代码的配置拆成两个 secret 只会漂移。
-# 运维需往该 secret 补 USE_OLD_QUERY 一个 key。
-#
-# 前置(不由本 workflow 创建):
-#   target group founa-stage-relay-query-tg(target_port 7447)与 ALB 8011 listener
-#     —— 由 Founa-Terraform 创建,本 workflow 只查询 ARN 并校验已挂 listener;
-#   部署角色 —— 复用 relay 的 founa-stage-deploy-relay-role,
-#     Founa-Terraform 的 service_deploy_repos 里 relay 条目需登记
-#     additional_ecs_services = ["relay-query"] 与 additional_target_groups = ["relay-query"]。
-#
-# 镜像:不重新构建,直接用主实例 workflow 推上去的 founa-relay:stage-latest ——
-# 同一份代码构建两次只会得到两个 digest,反而说不清两个实例跑的是不是同一版。
+# prod 不像 stage 那样自动串联: 生产的两个实例各自选版本、各自审批,
+# 一次只动一个, 出问题时回滚面小。
 
-name: deploy founa stage relay-query
+name: deploy founa prod relay-query
 
 # 触发: 主实例的 stage 部署成功后自动串联, 也可单独手动跑。
 #
@@ -42,23 +17,25 @@ name: deploy founa stage relay-query
 # workflow_run 只认默认分支上的 workflow 文件, 且上游失败时不应继续部署,
 # 故下面的 job 用 if 挡掉非 success 的情况。
 on:
-  workflow_run:
-    workflows: ["deploy founa stage"]
-    types: [completed]
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'ECR image tag(git sha, 要求镜像已在 founa-relay 上; 取 stage 验证过的那个 commit)'
+        required: true
+        type: string
 
 env:
   AWS_REGION: ap-northeast-1
   ECR_REPOSITORY: founa-relay          # 三环境共用一个仓库,靠 tag 区分
   ECS_SERVICE: relay-query
-  ECS_CLUSTER: founa-stage-ecs-cluster
-  ECS_TASK_DEFINITION: ./deploy/founa-task-def-query-stage.json
+  ECS_CLUSTER: founa-prod-ecs-cluster
+  ECS_TASK_DEFINITION: ./deploy/founa-task-def-query-prod.json
   CONTAINER_NAME: relay
-  TARGET_GROUP_NAME: founa-stage-relay-query-tg
-  LOG_GROUP: /ecs/founa-stage/relay-query
-  DESIRED_COUNT: 1
-  SUBNETS: subnet-0c1e1636fa223f91a,subnet-0480378f6412c8c26,subnet-03ac5050128f7e62d
-  SECURITY_GROUPS: sg-08170fc8b7f11835b
+  TARGET_GROUP_NAME: founa-prod-relay-query-tg
+  LOG_GROUP: /ecs/founa-prod/relay-query
+  DESIRED_COUNT: 2
+  SUBNETS: subnet-0950cc41950b8d6ef,subnet-0fafa7e8f05ed71d0,subnet-0eb1b0282891826a4
+  SECURITY_GROUPS: sg-040288f511ff914bf
 
 # OIDC 部署: 必须有 id-token: write, 否则拿不到 OIDC token。
 permissions:
@@ -66,19 +43,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: founa-stage-relay-query
+  group: founa-prod-relay-query
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Deploy founa stage relay-query
-    # 手动触发照跑; workflow_run 触发时只在主实例部署成功后才继续。
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+    name: Deploy founa prod relay-query
     runs-on: ubuntu-latest
     # 挂 Environment 是为了拿到 environment 级的 vars.AWS_ROLE,不是审批门。
-    environment: founa-stage
+    environment: founa-prod
 
     steps:
       - name: Checkout
@@ -89,7 +62,7 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHub-OIDC-founa-stage-relay-query
+          role-session-name: GitHub-OIDC-founa-prod-relay-query
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -98,24 +71,43 @@ jobs:
       # 不构建镜像:查询实例与主实例跑同一份代码,直接用主实例 workflow
       # 推上去的 founa-relay:stage-latest。tag 不存在说明主实例还没部署过,
       # 此时应先跑 founa_stage.yml —— 好过让 ECS 在拉镜像时才失败、任务反复重启。
-      # 按【commit sha】拉, 不用 stage-latest:
-      #   workflow_run 触发时取上游那次构建的 commit(head_sha), 保证与主实例跑的是
-      #   同一个 commit 的镜像; 手动触发时取本 workflow 所在 commit。
-      # 用浮动 tag 的话, 两个实例先后部署之间若推过新镜像就会跑不同代码。
+      # 不构建镜像: prod 只部署 stage 验证过的那个 commit。
+      # tag 不存在说明该 commit 没在 stage 跑过, 直接拦下。
       - name: Verify image exists in ECR
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
           aws ecr describe-images \
             --repository-name "$ECR_REPOSITORY" \
-            --image-ids imageTag="$IMAGE_SHA" \
+            --image-ids imageTag="${{ inputs.image_tag }}" \
             --query 'imageDetails[0].{Tag:imageTags,Pushed:imagePushedAt,Digest:imageDigest}' --output table
-          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_SHA}"
+          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${{ inputs.image_tag }}"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "::notice::image=${IMAGE}"
+
+      # prod-latest 只是给人看的浮动指针, service 始终跑具体 sha。
+      # 已指向同一 manifest 时 ECR 返回 ImageAlreadyExistsException, 属正常;
+      # 其余错误(如权限不足)要让 workflow 失败, 不能一并吞掉。
+      - name: Tag image as prod-latest
+        run: |
+          set -euo pipefail
+          MANIFEST=$(aws ecr batch-get-image \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="${{ inputs.image_tag }}" \
+            --query 'images[0].imageManifest' --output text)
+          if ERR=$(aws ecr put-image \
+                     --repository-name "$ECR_REPOSITORY" \
+                     --image-tag prod-latest \
+                     --image-manifest "$MANIFEST" 2>&1 >/dev/null); then
+            echo "prod-latest 已指向 ${{ inputs.image_tag }}"
+          elif echo "$ERR" | grep -q 'ImageAlreadyExistsException'; then
+            echo "prod-latest 本就指向该镜像, 跳过"
+          else
+            echo "$ERR" >&2
+            exit 1
+          fi
 
       - name: Render task definition
         id: task-def
