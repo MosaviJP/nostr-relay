@@ -1,11 +1,17 @@
 # founa(换品牌新体系)stage 部署。MOS-3743 / 父工单 MOS-3737。
 #
-# 触发只挂 workflow_dispatch:
+# 触发: push main 自动部署 stage, prod 走 founa_prod.yml 手动选择。
 #   本仓库既有的三条 workflow 都不做 ECS 部署 —— build.yaml 只跑 test/build,
 #   docker.yaml 与 release.yaml 只在 v* tag 上推 ghcr.io 镜像与二进制。
 #   mosavi 侧的 ECS 镜像是人工推到 ECR 的(mosavi-stage-relay-ecr 最近一次推送
-#   2026-09-16,而仓库 CI 从不推 ECR)。founa 侧改为由本 workflow 构建并推 founa-relay,
-#   与其余 founa 服务一致;不挂 push 以免每次合入都重部。
+#   2026-09-16,而仓库 CI 从不推 ECR)。founa 侧由本 workflow 构建并推 founa-relay,
+#   与其余 founa 服务一致。
+#
+#   本仓库只有 main 一条主分支,没有单独的 stage 分支,故 stage 的部署源就是 main。
+#   paths 过滤掉纯文档变更,免得改个 README 也重部一次。
+#   查询实例(relay-query)不在此 workflow 内,它由 founa_stage_query.yml 在本
+#   workflow 成功后经 workflow_run 串联触发 —— 它不构建镜像、直接用这里推上去的
+#   stage-latest,并行跑会拉到上一版。
 #
 # 与其余 founa 服务 workflow 的差异,均因 relay 自身形态:
 #   - 容器端口 7447,不是 80(main.go 默认 0.0.0.0:7447)。ALB 8001 是 listener 端口。
@@ -35,6 +41,16 @@
 name: deploy founa stage
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Dockerfile'
+      - 'entrypoint.sh'
+      - 'deploy/founa-task-def-stage.json'
+      - '.github/workflows/founa_stage.yml'
   workflow_dispatch:
 
 env:
@@ -101,21 +117,26 @@ jobs:
         uses: crazy-max/ghaction-github-runtime@v3
 
       # 平台 linux/amd64:与 task-def 的 runtimePlatform X86_64 一致。
+      # 双 tag: <sha> 是不可变的部署凭据, stage-latest 只是给人看的浮动指针。
+      # task definition 里填的是 <sha> —— 填浮动 tag 的话, 两个实例先后部署之间
+      # 若推过新镜像就会跑不同代码, 而 task definition 上看不出任何差别。
+      # prod 的「选择部署」也靠这个 sha: 挑一个 stage 验证过的版本。
       - name: Build and push
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          ECR_URL="${ECR_REGISTRY}/${ECR_REPOSITORY}"
           docker buildx build \
             --platform linux/amd64 \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
-            --tag "$IMAGE" \
+            --tag "${ECR_URL}:${GITHUB_SHA}" \
+            --tag "${ECR_URL}:${IMAGE_TAG}" \
             --push \
             .
-          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
-          echo "::notice::image=${IMAGE}"
+          echo "image=${ECR_URL}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "::notice::image=${ECR_URL}:${GITHUB_SHA} (也打了 ${IMAGE_TAG})"
 
       - name: Render task definition
         id: task-def

@@ -1,0 +1,119 @@
+{
+  "containerDefinitions": [
+    {
+      "name": "relay",
+      "image": "209085512950.dkr.ecr.ap-northeast-1.amazonaws.com/founa-relay:prod-latest",
+      "cpu": 512,
+      "memory": 1024,
+      "portMappings": [
+        {
+          "name": "relay-7447-tcp",
+          "containerPort": 7447,
+          "hostPort": 7447,
+          "protocol": "tcp",
+          "appProtocol": "http"
+        }
+      ],
+      "essential": true,
+      "environment": [],
+      "environmentFiles": [],
+      "secrets": [
+        {
+          "name": "POSTGRES_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-db-credentials-ng9wFd"
+        },
+        {
+          "name": "NODE_ENV",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:NODE_ENV::"
+        },
+        {
+          "name": "NOSTR_RELAY_REDIS_ADDR",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:NOSTR_RELAY_REDIS_ADDR::"
+        },
+        {
+          "name": "NOSTR_RELAY_REDIS_TLS",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:NOSTR_RELAY_REDIS_TLS::"
+        },
+        {
+          "name": "NOSTR_RELAY_QUERY_POLICY_MODE",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:NOSTR_RELAY_QUERY_POLICY_MODE::"
+        },
+        {
+          "name": "NOSTR_RELAY_SCOPE_MODE",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:NOSTR_RELAY_SCOPE_MODE::"
+        },
+        {
+          "name": "NOSTR_RELAY_SCOPE_OBSERVE_KINDS",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:NOSTR_RELAY_SCOPE_OBSERVE_KINDS::"
+        },
+        {
+          "name": "NOSTR_RELAY_KIND0_LIMIT_PER_PUBKEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:NOSTR_RELAY_KIND0_LIMIT_PER_PUBKEY::"
+        },
+        {
+          "name": "NOSTR_RELAY_SERVICE_PUBKEYS",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:NOSTR_RELAY_SERVICE_PUBKEYS::"
+        },
+        {
+          "name": "GROUP_MGMT_SCHEMA",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:GROUP_MGMT_SCHEMA::"
+        },
+        {
+          "name": "POSTGRES_USER",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:POSTGRES_USER::"
+        },
+        {
+          "name": "POSTGRES_HOST",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:POSTGRES_HOST::"
+        },
+        {
+          "name": "POSTGRES_PORT",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:POSTGRES_PORT::"
+        },
+        {
+          "name": "POSTGRES_DB",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:POSTGRES_DB::"
+        },
+        {
+          "name": "POSTGRES_OPTIONS",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:POSTGRES_OPTIONS::"
+        },
+        {
+          "name": "RELAY_EVENT_SCHEMA",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:RELAY_EVENT_SCHEMA::"
+        },
+        {
+          "name": "BOT_PRIVATE_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-prod-relay-env:BOT_PRIVATE_KEY::"
+        }
+      ],
+      "mountPoints": [],
+      "volumesFrom": [],
+      "ulimits": [],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/founa-prod/relay",
+          "awslogs-region": "ap-northeast-1",
+          "awslogs-stream-prefix": "ecs"
+        },
+        "secretOptions": []
+      }
+    }
+  ],
+  "family": "founa-prod-relay",
+  "taskRoleArn": "arn:aws:iam::209085512950:role/founa-prod-task-role",
+  "executionRoleArn": "arn:aws:iam::209085512950:role/founa-prod-task-execution-role",
+  "networkMode": "awsvpc",
+  "volumes": [],
+  "placementConstraints": [],
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  }
+}
