@@ -71,6 +71,10 @@
           "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-stage-relay-env:POSTGRES_OPTIONS::"
         },
         {
+          "name": "RELAY_EVENT_SCHEMA",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-stage-relay-env:RELAY_EVENT_SCHEMA::"
+        },
+        {
           "name": "USE_OLD_QUERY",
           "valueFrom": "arn:aws:secretsmanager:ap-northeast-1:209085512950:secret:founa-stage-relay-env:USE_OLD_QUERY::"
         }
