@@ -11,6 +11,10 @@ scripts/
 *.sh
 *.cmd
 *.json
+# deploy/ 下的 ECS task definition 必须进版本控制 —— 它是 founa 各环境配置项
+# 清单的唯一事实来源，被 workflow 以 file:// 直接 register。上面的 *.json 会连它
+# 一起吞掉（既有的 founa-task-def-stage.json 是 git add -f 塞进来的），故在此放行。
+!deploy/*.json
 *.diff
 *.*-wal
 *.tmp
