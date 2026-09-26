@@ -23,7 +23,12 @@
 # 前置(不由本 workflow 创建):
 #   target group founa-stage-relay-tg(target_port 7447)与 ALB 8001 listener
 #     —— 由 Founa-Terraform 创建,本 workflow 只查询 ARN 并校验已挂 listener;
-#   Secrets Manager 的 founa-stage-relay-env —— 需运维先建好并填入全部配置项;
+#   Secrets Manager 的 founa-stage-relay-env —— 需运维先建好并填入全部配置项。
+#     其中两个 schema 是【显式条目】, 不要把 search_path 手写进 POSTGRES_OPTIONS:
+#       RELAY_EVENT_SCHEMA  event 表(entrypoint.sh 转成连接串的 search_path)
+#       GROUP_MGMT_SCHEMA   群管理与消失消息相关表
+#     两者未必相同: event 是 relay 自有的表, 群管理表与 Moss-api 共用
+#     (dismsg_user_status 由 Moss-api 建、relay 只读), 故后者指向 Moss-api 的 schema;
 #   部署角色 founa-stage-deploy-relay-role —— 需在 Founa-Terraform 的
 #     service_deploy_repos 中登记后生成,并配到 founa-stage Environment 的 vars.AWS_ROLE。
 
