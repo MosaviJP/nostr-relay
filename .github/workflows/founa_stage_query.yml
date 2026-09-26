@@ -15,8 +15,11 @@
 #   - 不注入 BOT_PRIVATE_KEY —— 查询实例不做需要服务号身份的事
 #   - 不注入 NOSTR_RELAY_REDIS_ADDR / _TLS —— 查询实例不参与 pubsub
 #   - 多一个 USE_OLD_QUERY
+# 除此之外必须与主实例【逐项一致】,包括 RELAY_EVENT_SCHEMA —— 两个实例读的是
+# 同一批表,schema 配置分叉会让查询实例查到另一个 schema(或掉到 public)。
 # 其余配置项与主实例共用 founa-stage-relay-env 一个 secret ——
-# 同一份代码的配置拆成两个 secret 只会漂移。运维需往该 secret 补 USE_OLD_QUERY 一个 key。
+# 同一份代码的配置拆成两个 secret 只会漂移。
+# 运维需往该 secret 补 USE_OLD_QUERY 一个 key。
 #
 # 前置(不由本 workflow 创建):
 #   target group founa-stage-relay-query-tg(target_port 7447)与 ALB 8011 listener
