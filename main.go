@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"sync"
@@ -688,6 +689,33 @@ func (r *Relay) GetGroupManagementSchema() string {
 	return r.groupSchema
 }
 
+// redactDSN strips the password from a connection string before it is
+// logged.
+//
+// The URL used to be printed verbatim, leaking the plaintext password into
+// container logs — a credential shared by several services, readable by
+// anyone with log access. Keeping host/database/options is deliberate:
+// "which database did we connect to" is the first thing needed when
+// debugging startup problems.
+//
+// On parse failure it returns "(unparsable)" and never falls back to the
+// raw string — falling back would print the password for malformed URLs.
+func redactDSN(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "(unparsable)"
+	}
+	if u.User != nil {
+		if _, hasPW := u.User.Password(); hasPW {
+			u.User = url.UserPassword(u.User.Username(), "xxxxx")
+		}
+	}
+	return u.Redacted()
+}
+
 func main() {
 	var r Relay
 	var ver bool
@@ -735,7 +763,7 @@ func main() {
 		}()
 	}
 
-	fmt.Printf("DB url: %s\n", databaseURL)
+	fmt.Printf("DB: %s\n", redactDSN(databaseURL))
 	switch r.driverName {
 	case "sqlite3", "":
 		r.sqlite3Storage = &sqlite3.SQLite3Backend{
